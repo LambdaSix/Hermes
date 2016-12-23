@@ -1,36 +1,37 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
+using System.Threading.Tasks;
 
 namespace Hermes
 {
     public class Inbox<TIn>
     {
-        private readonly Dictionary<RuntimeTypeHandle, Action<TIn>> _handlers = new Dictionary<RuntimeTypeHandle, Action<TIn>>();
+        private readonly Dictionary<RuntimeTypeHandle, Func<TIn, Task>> _handlers = new Dictionary<RuntimeTypeHandle, Func<TIn, Task>>();
         private readonly Queue<TIn> _queue = new Queue<TIn>();
-        private readonly Object _lockObject = new object();
 
-        public Action<TIn> Fetch(TIn message) => _handlers.TryGetValue(Type.GetTypeHandle(message), out var outVal) ? outVal : null;
+        public Func<TIn, Task> Fetch(TIn message)
+            => _handlers.TryGetValue(Type.GetTypeHandle(message), out var outVal) ? outVal : null;
 
-        public void Register<TOut>(Action<Inbox<TIn>,TOut> func) where TOut : class, TIn => _handlers.Add(typeof(TOut).TypeHandle, m => func(this, m as TOut));
+        public void Register<TOut>(Func<Inbox<TIn>, TOut, Task> func) where TOut : class, TIn
+            => _handlers.Add(typeof(TOut).TypeHandle, async m => await func(this, m as TOut));
+
+        public void Register<TOut>(Action<Inbox<TIn>, TOut> func) where TOut : class, TIn
+            => _handlers.Add(typeof(TOut).TypeHandle, m => Task.Run(() => func(this, m as TOut)));
 
         public void Push(TIn message) => _queue.Enqueue(message);
 
-        public bool TryProcessNext()
+        public async Task<bool> TryProcessNext()
         {
-            if (Monitor.TryEnter(_lockObject))
-            {
-                var nextMessage = PeekOrDefault(_queue);
+            var nextMessage = PeekOrDefault(_queue);
 
-                if (nextMessage != null)
+            if (nextMessage != null)
+            {
+                var handlerType = Type.GetTypeHandle(nextMessage);
+                if (_handlers.TryGetValue(handlerType, out var val))
                 {
-                    var handlerType = Type.GetTypeHandle(nextMessage);
-                    if (_handlers.TryGetValue(handlerType, out Action<TIn> val))
-                    {
-                        val?.Invoke(_queue.Dequeue());
-                        return true;
-                    }
+                    await val.Invoke(_queue.Dequeue());
+                    return true;
                 }
             }
 
