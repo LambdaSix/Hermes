@@ -82,7 +82,11 @@ namespace Hermes
 
                     foreach (var handler in handlers)
                     {
-                        await Task.Run(() => handler.BeginInvoke(_queue.Dequeue(), ar => waitBarrier.RemoveParticipant(), null));
+                        await Task.Run(() => handler.BeginInvoke(_queue.Dequeue(), ar =>
+                        {
+                            waitBarrier.RemoveParticipant();
+                            (ar.AsyncState as Func<TIn, Task>)?.EndInvoke(ar);
+                        }, handler));
                     }
 
                     waitBarrier.SignalAndWait(TimeSpan.FromMilliseconds(handlers.Count * _HANDLER_TIME_MS));
